@@ -6,12 +6,11 @@ local mainMod  = "SUPER"       -- was: $mainMod = SUPER
 local terminal = "alacritty"
 
 -- ── Screenshots (grim + slurp + swappy) ─────────────────────────
--- Super + S        : select area and edit
--- Super + Shift + S: screenshot entire screen to clipboard
-hl.bind(mainMod .. " + S",         hl.dsp.exec_cmd([[grim -g "$(slurp)" - | swappy -f -]]))
-hl.bind(mainMod .. " + SHIFT + S", hl.dsp.exec_cmd("grim - | wl-copy"))
+-- Super + S: full screen screenshot to clipboard
+hl.bind(mainMod .. " + S",         hl.dsp.exec_cmd("grim - | wl-copy"))
 
--- ── Terminal tools (workflow boosters) ──────────────────────────
+-- Super + Shift + S: select window/area into swappy editor
+hl.bind(mainMod .. " + SHIFT + S", hl.dsp.exec_cmd([[grim -g "$(slurp)" - | swappy -f -]]))-- ── Terminal tools (workflow boosters) ──────────────────────────
 -- Launched with '<terminal> -e' to drop straight into the tool
 hl.bind(mainMod .. " + G", hl.dsp.exec_cmd(terminal .. " -e lazygit"))
 hl.bind(mainMod .. " + B", hl.dsp.exec_cmd(terminal .. " -e btm"))
