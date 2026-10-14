@@ -1,0 +1,3 @@
+# ── stow backups ────────────────────────────────────────────────
+# post-install.sh parks conflicting files here instead of deleting them.
+.stow-backups/
