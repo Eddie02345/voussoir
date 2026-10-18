@@ -1,4 +1,4 @@
-# My Arch Setup
+# voussoir
 
 My personal Arch Linux setup: an opinionated installer plus the dotfiles I
 actually run, for a ThinkPad T470. The installer also detects an X1 Carbon
@@ -7,6 +7,13 @@ parameters accordingly.
 
 The whole thing is LUKS2 (argon2id) + Btrfs + IWD + systemd-resolved, with
 Hyprland as the desktop.
+
+## The name
+
+A *voussoir* is a wedge-shaped stone in an arch: individually load-bearing,
+but only stable once the whole arch is assembled. That is roughly how this
+setup works — installer, packages, and dotfiles only hold together as one
+structure.
 
 ## Layout
 
@@ -78,7 +85,7 @@ so it is the safest and strongest check available.
 Then, after reboot and connecting to Wi-Fi:
 
 ```bash
-git clone <this repo> ~/My-Arch-Setup && cd ~/My-Arch-Setup
+git clone <this repo> ~/voussoir && cd ~/voussoir
 ./post-install.sh --dry-run   # shows every change, including stow actions
 ./post-install.sh             # applies them
 ```
