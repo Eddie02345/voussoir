@@ -1,0 +1,469 @@
+#!/usr/bin/env bash
+# ================================================================
+#  wifi-menu — fuzzel front-end for NetworkManager Wi-Fi + VPN
+#
+#  Replaces the third-party iwmenu. Wi-Fi is managed by
+#  NetworkManager (iwd is used as its Wi-Fi backend in this repo),
+#  which is also what ProtonVPN's official client requires.
+#
+#  Usage: wifi-menu        (bind it to a key or Waybar's network module)
+# ================================================================
+set -uo pipefail
+
+readonly APP="Network"
+readonly TAB=$'\t'
+
+# ── Notifications ───────────────────────────────────────────────
+
+notify() {
+    local summary=$1 urgency=${2:-normal} body=${3:-}
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send -a "$APP" -u "$urgency" "$summary" "$body"
+    else
+        printf '%s\n' "$summary" >&2
+    fi
+}
+
+fail() {
+    notify "$1" critical "${2:-}"
+    exit 1
+}
+
+# ── fuzzel helpers ──────────────────────────────────────────────
+
+# stdin: "label<TAB>value" lines. stdout: the selected value.
+pick() {
+    local prompt=$1
+    fuzzel --dmenu --no-sort --only-match --lines=15 --width=52 \
+        --prompt="$prompt" \
+        --with-nth=1 --accept-nth=2 --match-nth=1 \
+        --nth-delimiter="$TAB"
+}
+
+# Free-form one-line prompt (used for country names).
+ask_text() {
+    local prompt=$1
+    fuzzel --prompt-only="$prompt" --width=40
+}
+
+# Masked single-line prompt.
+ask_password() {
+    local prompt=$1
+    fuzzel --prompt-only="$prompt" --password='*' --width=40
+}
+
+# ── NetworkManager helpers ─────────────────────────────────────
+
+wifi_dev() {
+    local dev type
+    while IFS=: read -r dev type; do
+        if [[ "$type" == "wifi" ]]; then
+            printf '%s\n' "$dev"
+            return 0
+        fi
+    done < <(nmcli -t -f DEVICE,TYPE device status 2>/dev/null)
+    return 1
+}
+
+active_wifi_connection() {
+    local dev conn
+    dev=$(wifi_dev) || return 1
+    conn=$(nmcli -g GENERAL.CONNECTION device show "$dev" 2>/dev/null) || return 1
+    [[ -z "$conn" || "$conn" == "--" ]] && return 1
+    printf '%s\n' "$conn"
+}
+
+active_vpn_connection() {
+    local type name line
+    while IFS= read -r line; do
+        type=${line%%:*}
+        name=${line#*:}
+        case "$type" in
+            vpn|wireguard)
+                unescape "$name"
+                return 0
+                ;;
+        esac
+    done < <(nmcli -t -e yes -f TYPE,NAME connection show --active 2>/dev/null)
+    return 1
+}
+
+# nmcli escapes ':' as '\:' and '\' as '\\' in terse mode.
+unescape() {
+    local input=$1 out="" c i
+    for ((i = 0; i < ${#input}; i++)); do
+        c=${input:i:1}
+        if [[ "$c" == '\' && $((i + 1)) -lt ${#input} ]]; then
+            ((i++))
+            out+=${input:i:1}
+        else
+            out+=$c
+        fi
+    done
+    printf '%s' "$out"
+}
+
+# Return the NM connection name for an SSID, if one is saved.
+find_wifi_profile() {
+    local ssid=$1 type name name_ssid line
+    while IFS= read -r line; do
+        type=${line%%:*}
+        name=${line#*:}
+        [[ "$type" == "802-11-wireless" ]] || continue
+        name=$(unescape "$name")
+        name_ssid=$(nmcli -g 802-11-wireless.ssid connection show "$name" 2>/dev/null) || continue
+        if [[ "$name_ssid" == "$ssid" ]]; then
+            printf '%s\n' "$name"
+            return 0
+        fi
+    done < <(nmcli -t -e yes -f TYPE,NAME connection show 2>/dev/null)
+    return 1
+}
+
+# Run nmcli quietly and surface failures as a notification. Never
+# include the command line: it may contain a Wi-Fi passphrase.
+run_nmcli() {
+    local out rc
+    out=$("$@" 2>&1)
+    rc=$?
+    if ((rc != 0)); then
+        out=${out//$'\n'/ }
+        notify "Network action failed" critical "${out:0:400}"
+    fi
+    return $rc
+}
+
+# ── Wi-Fi actions ──────────────────────────────────────────────
+
+connect_wifi() {
+    local ssid=$1 security=$2 dev profile pass
+    dev=$(wifi_dev) || { notify "No Wi-Fi device found." critical; return 1; }
+
+    if profile=$(find_wifi_profile "$ssid") && [[ -n "$profile" ]]; then
+        run_nmcli nmcli connection up id "$profile" || return 1
+        notify "Wi-Fi" normal "Connected to $ssid."
+        return 0
+    fi
+
+    if [[ -n "$security" && "$security" != "--" ]]; then
+        pass=$(ask_password "Password for $ssid: ") || return 0
+        [[ -z "$pass" ]] && return 0
+        run_nmcli nmcli device wifi connect "$ssid" password "$pass" ifname "$dev" || return 1
+    else
+        run_nmcli nmcli device wifi connect "$ssid" ifname "$dev" || return 1
+    fi
+    notify "Wi-Fi" normal "Connected to $ssid."
+}
+
+connect_hidden() {
+    local ssid pass dev
+    ssid=$(ask_text "Hidden network name: ") || return 0
+    [[ -z "$ssid" ]] && return 0
+    dev=$(wifi_dev) || { notify "No Wi-Fi device found." critical; return 1; }
+
+    pass=$(ask_password "Password (blank if open): ") || return 0
+    if [[ -n "$pass" ]]; then
+        run_nmcli nmcli device wifi connect "$ssid" password "$pass" hidden yes ifname "$dev"
+    else
+        run_nmcli nmcli device wifi connect "$ssid" hidden yes ifname "$dev"
+    fi
+}
+
+disconnect_wifi() {
+    local active
+    active=$(active_wifi_connection) || true
+    if [[ -z "$active" ]]; then
+        notify "Wi-Fi" normal "Not connected."
+        return 0
+    fi
+    run_nmcli nmcli connection down id "$active" &&
+        notify "Wi-Fi" normal "Disconnected from $active."
+}
+
+wifi_list() {
+    local dev inuse signal security ssid line rest choice idx=0
+    local -a entries=() ssids=() secs=()
+    local -A seen=()
+
+    dev=$(wifi_dev) || { notify "No Wi-Fi device found." critical; return 1; }
+
+    # A rescan can take a moment; ignore failures (e.g. radio off).
+    nmcli device wifi rescan ifname "$dev" >/dev/null 2>&1 || true
+    sleep 1
+
+    # IN-USE, SIGNAL and SECURITY cannot contain ':', so the SSID is
+    # everything after the third colon. This keeps escaped SSID colons
+    # (nmcli -e yes writes them as '\:') intact for unescape().
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        inuse=${line%%:*}
+        rest=${line#*:}
+        signal=${rest%%:*}
+        rest=${rest#*:}
+        security=${rest%%:*}
+        ssid=${rest#*:}
+        [[ -z "$ssid" ]] && continue
+        ssid=$(unescape "$ssid")
+        # Tabs/newlines would break fuzzel's column delimiter.
+        ssid=${ssid//$'\t'/ }
+        ssid=${ssid//$'\n'/ }
+        [[ -n "${seen["$ssid"]+x}" ]] && continue
+        seen["$ssid"]=1
+
+        local mark="  "
+        [[ "$inuse" == "*" ]] && mark="● "
+        entries+=("$(printf '%s%-30s %3s%%  %s' "$mark" "$ssid" "$signal" "$security")${TAB}${idx}")
+        ssids+=("$ssid")
+        secs+=("$security")
+        ((idx++))
+    done < <(nmcli -t -e yes -f IN-USE,SIGNAL,SECURITY,SSID device wifi list ifname "$dev" 2>/dev/null |
+        sort -t: -k1,1r -k2,2nr)
+
+    entries+=("Connect to hidden network…${TAB}-1")
+
+    choice=$(printf '%s\n' "${entries[@]}" | pick "Wi-Fi: ") || return 0
+    [[ -z "$choice" ]] && return 0
+
+    if [[ "$choice" == "-1" ]]; then
+        connect_hidden
+    else
+        connect_wifi "${ssids[$choice]}" "${secs[$choice]}"
+    fi
+}
+
+toggle_wifi() {
+    local state
+    state=$(nmcli radio wifi 2>/dev/null || echo disabled)
+    if [[ "$state" == "enabled" ]]; then
+        run_nmcli nmcli radio wifi off && notify "Wi-Fi" normal "Wi-Fi turned off."
+    else
+        run_nmcli nmcli radio wifi on && notify "Wi-Fi" normal "Wi-Fi turned on."
+    fi
+}
+
+# ── VPN actions ────────────────────────────────────────────────
+
+vpn_quick_connect() {
+    local out rc
+    command -v protonvpn >/dev/null 2>&1 ||
+        { notify "ProtonVPN CLI not installed." critical "Install proton-vpn-cli."; return 1; }
+
+    notify "ProtonVPN" low "Connecting to the fastest server…"
+    out=$(protonvpn connect 2>&1)
+    rc=$?
+    if ((rc == 0)); then
+        notify "ProtonVPN" normal "Connected."
+    else
+        out=${out//$'\n'/ }
+        notify "ProtonVPN" critical "${out:0:400}"
+    fi
+    return $rc
+}
+
+vpn_country_connect() {
+    local country out rc
+    command -v protonvpn >/dev/null 2>&1 ||
+        { notify "ProtonVPN CLI not installed." critical "Install proton-vpn-cli."; return 1; }
+
+    country=$(ask_text "Country (code or name): ") || return 0
+    [[ -z "$country" ]] && return 0
+
+    notify "ProtonVPN" low "Connecting to $country…"
+    out=$(protonvpn connect --country "$country" 2>&1)
+    rc=$?
+    if ((rc == 0)); then
+        notify "ProtonVPN" normal "Connected to $country."
+    else
+        out=${out//$'\n'/ }
+        notify "ProtonVPN" critical "${out:0:400}"
+    fi
+    return $rc
+}
+
+vpn_disconnect() {
+    local name=$1
+    # Let the ProtonVPN client tear down its kill-switch rules if it is
+    # installed; deactivating the NM profile is the fallback for imported
+    # WireGuard/OpenVPN profiles.
+    if command -v protonvpn >/dev/null 2>&1; then
+        protonvpn disconnect >/dev/null 2>&1 || true
+    fi
+    nmcli connection down id "$name" >/dev/null 2>&1 || true
+
+    if active_vpn_connection >/dev/null 2>&1; then
+        notify "VPN" critical "Could not disconnect the VPN."
+        return 1
+    fi
+    notify "VPN" normal "Disconnected."
+}
+
+vpn_menu() {
+    local active type name label choice idx=0 line
+    local -a entries=() actions=() args=()
+
+    active=$(active_vpn_connection) || true
+
+    if [[ -n "$active" ]]; then
+        entries+=("Disconnect VPN: $active${TAB}${idx}")
+        actions+=("down")
+        args+=("$active")
+        ((idx++))
+    fi
+
+    if command -v protonvpn >/dev/null 2>&1; then
+        entries+=("ProtonVPN: Quick connect (fastest)${TAB}${idx}")
+        actions+=("quick")
+        args+=("")
+        ((idx++))
+
+        entries+=("ProtonVPN: Connect to a country…${TAB}${idx}")
+        actions+=("country")
+        args+=("")
+        ((idx++))
+
+        entries+=("ProtonVPN: Sign in (terminal)${TAB}${idx}")
+        actions+=("signin")
+        args+=("")
+        ((idx++))
+    fi
+
+    # Saved NetworkManager VPN/WireGuard profiles (e.g. imported configs).
+    while IFS= read -r line; do
+        type=${line%%:*}
+        name=${line#*:}
+        case "$type" in
+            vpn|wireguard) ;;
+            *) continue ;;
+        esac
+        name=$(unescape "$name")
+        [[ "$name" == "$active" ]] && continue
+        label="Connect VPN: $name"
+        entries+=("$label${TAB}${idx}")
+        actions+=("up")
+        args+=("$name")
+        ((idx++))
+    done < <(nmcli -t -e yes -f TYPE,NAME connection show 2>/dev/null)
+
+    entries+=("Open ProtonVPN${TAB}${idx}")
+    actions+=("open")
+    args+=("")
+    ((idx++))
+
+    choice=$(printf '%s\n' "${entries[@]}" | pick "VPN: ") || return 0
+    [[ -z "$choice" ]] && return 0
+
+    case "${actions[$choice]}" in
+        down)    vpn_disconnect "${args[$choice]}" ;;
+        up)      run_nmcli nmcli connection up id "${args[$choice]}" &&
+                     notify "VPN" normal "Connected to ${args[$choice]}." ;;
+        quick)   vpn_quick_connect ;;
+        country) vpn_country_connect ;;
+        signin)  launch_terminal protonvpn signin ;;
+        open)    open_protonvpn ;;
+    esac
+}
+
+# ── Launchers ──────────────────────────────────────────────────
+
+open_protonvpn() {
+    if command -v protonvpn-app >/dev/null 2>&1; then
+        setsid -f protonvpn-app >/dev/null 2>&1
+    else
+        notify "ProtonVPN app not installed." critical "Install proton-vpn-gtk-app."
+    fi
+}
+
+network_settings() {
+    if command -v nm-connection-editor >/dev/null 2>&1; then
+        setsid -f nm-connection-editor >/dev/null 2>&1
+    elif command -v alacritty >/dev/null 2>&1; then
+        setsid -f alacritty -e nmtui >/dev/null 2>&1
+    else
+        notify "No network settings front-end found." critical "Install nm-connection-editor."
+    fi
+}
+
+launch_terminal() {
+    if command -v alacritty >/dev/null 2>&1; then
+        setsid -f alacritty -e "$@" >/dev/null 2>&1
+    else
+        notify "Terminal not found." critical "Install alacritty."
+    fi
+}
+
+# ── Main menu ──────────────────────────────────────────────────
+
+main_menu() {
+    local active vpn radio choice idx=0
+    local -a entries=() actions=()
+
+    active=$(active_wifi_connection) || true
+    vpn=$(active_vpn_connection) || true
+    radio=$(nmcli radio wifi 2>/dev/null || echo disabled)
+
+    if [[ "$radio" == "enabled" ]]; then
+        if [[ -n "$active" ]]; then
+            entries+=("Wi-Fi: $active (connected)${TAB}${idx}")
+            actions+=("list")
+            ((idx++))
+
+            entries+=("Disconnect from Wi-Fi${TAB}${idx}")
+            actions+=("disconnect")
+            ((idx++))
+        else
+            entries+=("Connect to Wi-Fi…${TAB}${idx}")
+            actions+=("list")
+            ((idx++))
+        fi
+
+        entries+=("Connect to hidden network…${TAB}${idx}")
+        actions+=("hidden")
+        ((idx++))
+
+        entries+=("Turn Wi-Fi off${TAB}${idx}")
+        actions+=("toggle")
+        ((idx++))
+    else
+        entries+=("Turn Wi-Fi on${TAB}${idx}")
+        actions+=("toggle")
+        ((idx++))
+    fi
+
+    if [[ -n "$vpn" ]]; then
+        entries+=("VPN: $vpn (connected)${TAB}${idx}")
+    else
+        entries+=("VPN: off${TAB}${idx}")
+    fi
+    actions+=("vpn")
+    ((idx++))
+
+    entries+=("Open ProtonVPN${TAB}${idx}")
+    actions+=("open")
+    ((idx++))
+
+    entries+=("Network settings…${TAB}${idx}")
+    actions+=("settings")
+    ((idx++))
+
+    choice=$(printf '%s\n' "${entries[@]}" | pick "Network: ") || return 0
+    [[ -z "$choice" ]] && return 0
+
+    case "${actions[$choice]}" in
+        list)       wifi_list ;;
+        hidden)     connect_hidden ;;
+        disconnect) disconnect_wifi ;;
+        toggle)     toggle_wifi ;;
+        vpn)        vpn_menu ;;
+        open)       open_protonvpn ;;
+        settings)   network_settings ;;
+    esac
+}
+
+# ── Entry point ────────────────────────────────────────────────
+
+command -v fuzzel >/dev/null 2>&1 || fail "fuzzel is not installed."
+command -v nmcli >/dev/null 2>&1 || fail "nmcli is not installed." "Install NetworkManager."
+nmcli -t -f STATE general status >/dev/null 2>&1 ||
+    fail "NetworkManager is not running." "Start NetworkManager.service."
+
+main_menu

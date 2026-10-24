@@ -44,7 +44,7 @@
     "tooltip-format-wifi": "{essid} ({signalStrength}%)",
     "tooltip-format-ethernet": "{ifname} ",
     "tooltip-format-disconnected": "Disconnected",
-    "on-click": "iwmenu -l fuzzel"
+    "on-click": "bash -c $HOME/.local/bin/wifi-menu"
 },
     "pulseaudio": {
         "format": "{volume}% {icon}",

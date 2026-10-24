@@ -5,8 +5,8 @@ actually run, for a ThinkPad T470. The installer also detects an X1 Carbon
 Gen 7 and generic Intel/AMD machines and adjusts packages and kernel
 parameters accordingly.
 
-The whole thing is LUKS2 (argon2id) + Btrfs + IWD + systemd-resolved, with
-Hyprland as the desktop.
+The whole thing is LUKS2 (argon2id) + Btrfs + NetworkManager (with iwd as the
+Wi-Fi backend) + systemd-resolved, with Hyprland as the desktop.
 
 ## The name
 
@@ -22,6 +22,7 @@ package whose contents mirror `$HOME`:
 
 ```
 hypr/.config/hypr/        Hyprland configuration — Lua
+scripts/.local/bin/       wifi-menu — fuzzel Wi-Fi / ProtonVPN menu
 waybar/.config/waybar/    Waybar bar: config.jsonc, style.css, scripts/
 ```
 
@@ -63,14 +64,44 @@ only — Hyprland does not load it, and it should not be edited.
 
 ```bash
 luac -p hypr/.config/hypr/*.lua                                     # syntax
-bash -n install.sh post-install.sh                                  # shell syntax
+bash -n install.sh post-install.sh scripts/.local/bin/wifi-menu     # shell syntax
 hyprland --verify-config -c hypr/.config/hypr/hyprland.lua          # the real check
-shellcheck install.sh post-install.sh                               # if installed
+shellcheck install.sh post-install.sh scripts/.local/bin/wifi-menu  # if installed
 ```
 
 `hyprland --verify-config` executes the config, follows `require()` into the
 modules, and rejects unknown configuration keys. It needs no running session,
 so it is the safest and strongest check available.
+
+## Networking
+
+ProtonVPN's official client requires **NetworkManager**, so NetworkManager is
+the control plane. **iwd** stays as the 802.11 backend and is started on demand
+by NetworkManager; DNS is handed to **systemd-resolved**. `networkctl` is not
+used here — it only fronts systemd-networkd, which is not part of this setup.
+
+The Waybar network module and `Super + N` open `wifi-menu`
+(`scripts/.local/bin/wifi-menu`), a fuzzel menu that can:
+
+- scan, connect, disconnect, and turn Wi-Fi on/off;
+- prompt for a passphrase with fuzzel and save the profile in NetworkManager;
+- connect to hidden networks;
+- quick-connect ProtonVPN or pick a country;
+- activate imported NetworkManager VPN / WireGuard profiles;
+- open the ProtonVPN app or `nm-connection-editor`.
+
+The ProtonVPN packages are in Arch's `extra` repo and are installed by the
+installer/post-install:
+
+```bash
+sudo pacman -S proton-vpn-gtk-app proton-vpn-cli
+```
+
+Sign in once with `protonvpn signin` (or the GUI); credentials are stored in
+gnome-keyring, which ProtonVPN pulls in automatically.
+
+The old `iwmenu-bin` package is no longer used; remove it with
+`paru -Rns iwmenu-bin`.
 
 ## Installing
 

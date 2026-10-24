@@ -2,7 +2,6 @@ android-studio
 bottles
 bzmenu-bin
 catppuccin-gtk-theme-mocha
-iwmenu-bin
 jpdfbookmarks
 packettracer
 paru

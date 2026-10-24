@@ -47,6 +47,8 @@ man-db
 mesa
 nemo
 neovim
+networkmanager
+nm-connection-editor
 noto-fonts-emoji
 npm
 nwg-look
@@ -56,6 +58,8 @@ papirus-icon-theme
 pipewire
 pipewire-pulse
 polkit-gnome
+proton-vpn-cli
+proton-vpn-gtk-app
 pycharm-community-edition
 python-pip
 qbittorrent

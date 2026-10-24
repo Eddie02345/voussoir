@@ -2,7 +2,7 @@
 # ================================================================
 #  Arch Linux Universal Installer v2.0
 #  Profiles: ThinkPad T470 | X1 Carbon Gen 7 | Generic Intel/AMD
-#  Stack:    LUKS2 (argon2id) + Btrfs + IWD + systemd-resolved
+#  Stack:    LUKS2 (argon2id) + Btrfs + NetworkManager (iwd) + resolved
 # ================================================================
 set -euo pipefail
 
@@ -138,7 +138,7 @@ clear
 echo -e "${BOLD}"
 echo " ╔════════════════════════════════════════════════╗"
 echo " ║     ARCH LINUX UNIVERSAL INSTALLER  v2.0     ║"
-echo " ║   LUKS2 · Btrfs · IWD · systemd-resolved    ║"
+echo " ║   LUKS2 · Btrfs · NetworkManager · resolved ║"
 echo " ╚════════════════════════════════════════════════╝"
 echo -e "${NC}"
 
@@ -214,8 +214,9 @@ BASE_PKGS=(
     # Base system
     base linux linux-firmware base-devel git rust sudo
     efibootmgr dosfstools btrfs-progs
-    # Network
-    iwd bluez bluez-utils reflector
+    # Network (NetworkManager drives iwd; ProtonVPN requires NetworkManager)
+    networkmanager nm-connection-editor iwd bluez bluez-utils reflector
+    proton-vpn-gtk-app proton-vpn-cli
     # Wayland / Hyprland
     hyprland xdg-desktop-portal-hyprland hyprpaper waybar swaync
     # Audio (PipeWire)
@@ -240,7 +241,7 @@ BASE_PKGS=(
 ALL_PKGS=("${BASE_PKGS[@]}" "$MICROCODE" "${GPU_PKGS[@]}" "${EXTRA_PKGS[@]}")
 
 # systemd services, built dynamically from the profile
-ALL_SERVICES="iwd systemd-resolved bluetooth acpid sddm fstrim.timer snapper-timeline.timer snapper-cleanup.timer"
+ALL_SERVICES="NetworkManager systemd-resolved bluetooth acpid sddm fstrim.timer snapper-timeline.timer snapper-cleanup.timer"
 [[ -n "$SVC_EXTRA" ]] && ALL_SERVICES="$ALL_SERVICES $SVC_EXTRA"
 
 # ── 6. Final Confirmation ───────────────────────────────────────
@@ -378,13 +379,23 @@ echo "$USERNAME:$USER_PASS" | chpasswd
 echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/wheel
 chmod 0440 /etc/sudoers.d/wheel
 
-# ── IWD (standalone network / DNS via systemd-resolved) ──────
+# ── NetworkManager (iwd Wi-Fi backend, DNS via resolved) ─────
+# ProtonVPN's official client requires NetworkManager. iwd remains the
+# 802.11 backend and is started on demand by NetworkManager, so it must
+# not do its own IP/DNS configuration. Do not enable iwd.service.
+mkdir -p /etc/NetworkManager/conf.d
+cat > /etc/NetworkManager/conf.d/wifi-backend.conf <<EOF
+[device]
+wifi.backend=iwd
+EOF
+cat > /etc/NetworkManager/conf.d/dns.conf <<EOF
+[main]
+dns=systemd-resolved
+EOF
 mkdir -p /etc/iwd
 cat > /etc/iwd/main.conf <<EOF
 [General]
-EnableNetworkConfiguration=true
-[Network]
-NameResolvingService=systemd
+EnableNetworkConfiguration=false
 EOF
 
 # ── ZRAM swap ────────────────────────────────────────────────
@@ -472,7 +483,7 @@ hr
 echo "  Next steps:"
 echo "  1. reboot — remove the USB drive when the screen goes dark"
 echo "  2. Unlock LUKS, then connect to Wi-Fi:"
-echo "     iwctl station wlan0 connect <YOUR_SSID>"
+echo "     nmtui        # or: nmcli device wifi connect <SSID> --ask"
 echo "  3. git clone <your-dotfiles-repo> && ./post-install.sh --dry-run"
 echo "     (review the plan, then re-run without --dry-run)"
 echo

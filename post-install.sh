@@ -139,7 +139,7 @@ EOF
     sleep 2
     ping -c 1 -W 3 archlinux.org &>/dev/null \
         && ok "Network restored." \
-        || err "Still no network. Check 'iwctl' / 'systemctl status iwd'."
+        || err "Still no network. Check 'nmcli device' / 'systemctl status NetworkManager'."
 fi
 
 # ================================================================
@@ -231,7 +231,7 @@ step "5 / 6 — GNU Stow (Dotfiles)"
 
 # Stow packages to attempt — each must be a top-level dir in $DOTFILES_DIR.
 # The script skips any that don't exist in your repo.
-STOW_PACKAGES=(hypr waybar nvim kitty alacritty bash zsh)
+STOW_PACKAGES=(hypr waybar scripts nvim kitty alacritty bash zsh)
 
 # Corresponding paths to clean before stowing to avoid conflicts.
 # Add entries here whenever you add new stow packages above.
@@ -259,10 +259,14 @@ backup_path() {
 }
 
 # True when $1 is a symlink that already points into the stow package $2.
+# stow "folds" directories, so the link may point at a subdirectory of the
+# package (e.g. ~/.config/hypr -> repo/hypr/.config/hypr), not the root.
 is_stowed() {
     [[ -L "$1" ]] || return 1
-    local target; target=$(readlink -f "$1") || return 1
-    [[ "$target" == "$(readlink -f "$2")" ]]
+    local target root
+    target=$(readlink -f "$1") || return 1
+    root=$(readlink -f "$2") || return 1
+    [[ "$target" == "$root" || "$target" == "$root"/* ]]
 }
 
 # ── Hyprland .conf → .lua migration guard ───────────────────────
@@ -408,6 +412,72 @@ if command -v fwupdmgr &>/dev/null; then
         fwupdmgr get-updates 2>/dev/null || info "No firmware updates available right now."
         echo
         info "To apply firmware updates: sudo fwupdmgr update"
+    fi
+fi
+
+# ================================================================
+#  NETWORK STACK — NetworkManager + iwd (required by ProtonVPN)
+# ================================================================
+# ProtonVPN's official client only works through NetworkManager. iwd
+# stays as NetworkManager's Wi-Fi backend so the existing 802.11 setup
+# (and its known networks) is preserved.
+step "Final — NetworkManager + ProtonVPN"
+
+NM_PKGS=(networkmanager nm-connection-editor iwd proton-vpn-gtk-app proton-vpn-cli)
+NM_MISSING=()
+for pkg in "${NM_PKGS[@]}"; do
+    pacman -Q "$pkg" &>/dev/null || NM_MISSING+=("$pkg")
+done
+
+if [[ ${#NM_MISSING[@]} -gt 0 ]]; then
+    if (( DRY_RUN )); then
+        info "[dry-run] sudo pacman -S --needed --noconfirm ${NM_MISSING[*]}"
+    else
+        log "Installing: ${NM_MISSING[*]}"
+        sudo pacman -S --needed --noconfirm "${NM_MISSING[@]}"
+        ok "NetworkManager + ProtonVPN installed."
+    fi
+else
+    ok "NetworkManager + ProtonVPN already installed."
+fi
+
+NM_CONF_DIR=/etc/NetworkManager/conf.d
+if (( DRY_RUN )); then
+    info "[dry-run] would write ${NM_CONF_DIR}/wifi-backend.conf ([device] wifi.backend=iwd)"
+    info "[dry-run] would write ${NM_CONF_DIR}/dns.conf ([main] dns=systemd-resolved)"
+    info "[dry-run] would write /etc/iwd/main.conf (EnableNetworkConfiguration=false)"
+    info "[dry-run] would disable iwd.service and enable/restart NetworkManager.service"
+else
+    sudo mkdir -p "$NM_CONF_DIR"
+    sudo tee "$NM_CONF_DIR/wifi-backend.conf" >/dev/null <<'EOF'
+[device]
+wifi.backend=iwd
+EOF
+    sudo tee "$NM_CONF_DIR/dns.conf" >/dev/null <<'EOF'
+[main]
+dns=systemd-resolved
+EOF
+    sudo mkdir -p /etc/iwd
+    sudo tee /etc/iwd/main.conf >/dev/null <<'EOF'
+[General]
+EnableNetworkConfiguration=false
+EOF
+    ok "NetworkManager configured (iwd backend, systemd-resolved DNS)."
+
+    # NetworkManager starts and owns iwd on demand; enabling iwd
+    # separately would give two DHCP/DNS clients.
+    run sudo systemctl disable iwd.service 2>/dev/null || true
+    run sudo systemctl enable NetworkManager.service
+    run sudo systemctl restart iwd.service
+    run sudo systemctl restart NetworkManager.service
+
+    sleep 3
+    if ping -c 1 -W 3 archlinux.org &>/dev/null; then
+        ok "NetworkManager is up and connected."
+    else
+        warn "NetworkManager is running, but the network is not reachable yet."
+        warn "Connect with: nmcli device wifi connect <SSID> --ask"
+        warn "After stowing dotfiles, run: wifi-menu"
     fi
 fi
 
