@@ -655,8 +655,17 @@ vpn_signin_terminal() {
     vpn_guard || return 1
     case $VPN_IMPL in
         new)
+            local user
+            user=$(ask_text "ProtonVPN username/email: ") || return 0
+            # Trim stray leading/trailing whitespace from a paste.
+            user="${user#"${user%%[![:space:]]*}"}"
+            user="${user%"${user##*[![:space:]]}"}"
+            [[ -n $user ]] || return 0
+            # The new CLI takes the username as an argument, then asks for
+            # the password and (if needed) a 2FA token on the terminal.
             launch_terminal bash -lc \
-                'protonvpn signin; printf "\n"; read -rp "Press Enter to close…"'
+                'protonvpn signin "$1"; printf "\n"; read -rp "Press Enter to close…"' \
+                _ "$user"
             ;;
         legacy)
             launch_terminal bash -lc \
