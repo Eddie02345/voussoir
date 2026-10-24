@@ -88,6 +88,18 @@ button:hover {
     animation-direction: alternate;
 }
 
+/* Network and VPN stay monochrome in every state. */
+#network,
+#network.wifi,
+#network.ethernet,
+#network.linked,
+#network.disconnected,
+#custom-vpn,
+#custom-vpn.connected,
+#custom-vpn.disconnected {
+    color: #ffffff;
+}
+
 /* Grouped hover states */
 #battery:hover,
 #bluetooth:hover,
@@ -98,8 +110,4 @@ button:hover {
 #pulseaudio:hover,
 #tray:hover {
     background-color: rgba(200, 200, 200, 0.3); 
-}
-
-#custom-vpn.connected {
-    color: #a6e3a1; /* Catppuccin Green */
 }

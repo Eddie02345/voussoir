@@ -1169,10 +1169,10 @@ json_escape() {
     printf '%s' "$s"
 }
 
-# JSON for Waybar's custom/vpn module. Empty text + hide-empty-text
-# keeps the module out of the bar while the VPN is disconnected.
+# JSON for Waybar's custom/vpn module. The module is always present so
+# the VPN controls remain one click away; the glyph changes with state.
 waybar_json() {
-    local name="" device="" ip="" disp="" text="" class="disconnected"
+    local name="" device="" ip="" disp="" text=$I_VPN_OFF class="disconnected"
     local tooltip="VPN: Disconnected"
 
     if command -v nmcli >/dev/null 2>&1 &&
