@@ -383,6 +383,9 @@ chmod 0440 /etc/sudoers.d/wheel
 # ProtonVPN's official client requires NetworkManager. iwd remains the
 # 802.11 backend and is started on demand by NetworkManager, so it must
 # not do its own IP/DNS configuration. Do not enable iwd.service.
+# The dotfiles' Waybar config maps the Wi-Fi icon to `wifi-menu --wifi`
+# and the VPN icon to `wifi-menu --vpn`; post-install.sh stows those
+# packages and verifies the split.
 mkdir -p /etc/NetworkManager/conf.d
 cat > /etc/NetworkManager/conf.d/wifi-backend.conf <<EOF
 [device]
@@ -486,6 +489,7 @@ echo "  2. Unlock LUKS, then connect to Wi-Fi:"
 echo "     nmtui        # or: nmcli device wifi connect <SSID> --ask"
 echo "  3. git clone <your-dotfiles-repo> && ./post-install.sh --dry-run"
 echo "     (review the plan, then re-run without --dry-run)"
+echo "     This deploys the Waybar split: Wi-Fi icon -> Wi-Fi menu, VPN icon -> VPN menu."
 echo
 echo "  Hyprland loads ~/.config/hypr/hyprland.lua (needs Hyprland 0.55+),"
 echo "  which require()s the modules sitting beside it. The previous"

@@ -325,6 +325,27 @@ done
 [[ ${#skipped[@]} -gt 0 ]] && info "Skipped (not in repo, or unresolved): ${skipped[*]}"
 (( DRY_RUN )) || { [[ -d "$BACKUP_DIR" ]] && info "Backups from this run: ${BACKUP_DIR}"; }
 
+# ── Waybar: Wi-Fi and VPN icons open separate menus ─────────────
+# The 'waybar' package ships custom/vpn; the 'scripts' package ships
+# wifi-menu. Verify both landed, otherwise the bar falls back to the
+# combined menu (or no VPN menu at all).
+if (( DRY_RUN )); then
+    info "[dry-run] would verify Waybar network/VPN click separation"
+else
+    WAYBAR_CONF="${HOME}/.config/waybar/config.jsonc"
+    WIFI_MENU="${HOME}/.local/bin/wifi-menu"
+    if [[ -f "$WAYBAR_CONF" && -x "$WIFI_MENU" ]] &&
+       grep -q '"custom/vpn"' "$WAYBAR_CONF" &&
+       grep -qE '"on-click"[[:space:]]*:[[:space:]]*"\$HOME/\.local/bin/wifi-menu --wifi"' "$WAYBAR_CONF" &&
+       grep -qE '"on-click"[[:space:]]*:[[:space:]]*"\$HOME/\.local/bin/wifi-menu --vpn"' "$WAYBAR_CONF" &&
+       grep -qE -- '--wifi\)[[:space:]]+wifi_menu' "$WIFI_MENU" &&
+       grep -qE -- '--vpn\)[[:space:]]+vpn_menu' "$WIFI_MENU"; then
+        ok "Waybar: Wi-Fi icon opens the Wi-Fi menu; VPN icon opens the VPN menu."
+    else
+        warn "Waybar Wi-Fi/VPN split not deployed — check the 'waybar' and 'scripts' stow packages."
+    fi
+fi
+
 # ================================================================
 #  STEP 6 — SHELL & SYSTEM CONFIGURATION
 # ================================================================

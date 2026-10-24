@@ -46,14 +46,14 @@
         "tooltip-format-wifi": "{essid} ({signalStrength}%)",
         "tooltip-format-ethernet": "{ifname} ",
         "tooltip-format-disconnected": "Disconnected",
-        "on-click": "bash -c $HOME/.local/bin/wifi-menu --wifi"
+        "on-click": "$HOME/.local/bin/wifi-menu --wifi"
     },
     "custom/vpn": {
         "exec": "$HOME/.local/bin/wifi-menu --waybar",
         "return-type": "json",
         "interval": 5,
         "format": "{text}",
-        "on-click": "bash -c $HOME/.local/bin/wifi-menu --vpn"
+        "on-click": "$HOME/.local/bin/wifi-menu --vpn"
     },
     "pulseaudio": {
         "format": "{volume}% {icon}",
