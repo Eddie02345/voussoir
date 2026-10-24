@@ -83,12 +83,23 @@ used here — it only fronts systemd-networkd, which is not part of this setup.
 The Waybar network module and `Super + N` open `wifi-menu`
 (`scripts/.local/bin/wifi-menu`), a fuzzel menu that can:
 
-- scan, connect, disconnect, and turn Wi-Fi on/off;
-- prompt for a passphrase with fuzzel and save the profile in NetworkManager;
-- connect to hidden networks;
-- quick-connect ProtonVPN or pick a country;
+- show Wi-Fi and VPN state in a status header;
+- scan from the cached list and rescan only on request;
+- deduplicate multi-band APs, keeping the strongest BSSID;
+- connect saved profiles directly, or prompt for a passphrase inline;
+- disconnect/reconnect the active network, join hidden networks, and toggle
+  the radio;
+- run ProtonVPN connects in the background and report the server/IP in a
+  notification;
+- quick-connect the fastest/random/P2P/Tor/Secure Core server, pick a country
+  from the CLI's list, or enter a specific server;
+- show VPN status plus tunnel/public IP on demand;
 - activate imported NetworkManager VPN / WireGuard profiles;
 - open the ProtonVPN app or `nm-connection-editor`.
+
+The official CLI cannot run while the ProtonVPN desktop app is open. When the
+menu detects the app, it offers to close it and then exposes the full CLI
+actions.
 
 The ProtonVPN packages are in Arch's `extra` repo and are installed by the
 installer/post-install:
