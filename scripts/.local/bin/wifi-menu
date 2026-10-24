@@ -1157,10 +1157,54 @@ main_menu() {
 }
 
 # ================================================================
-#  Entry point
+#  Waybar status / entry point
 # ================================================================
 
+json_escape() {
+    local s=${1:-}
+    s=${s//\\/\\\\}
+    s=${s//\"/\\\"}
+    s=${s//$'\n'/\\n}
+    s=${s//$'\r'/}
+    printf '%s' "$s"
+}
+
+# JSON for Waybar's custom/vpn module. Empty text + hide-empty-text
+# keeps the module out of the bar while the VPN is disconnected.
+waybar_json() {
+    local name="" device="" ip="" disp="" text="" class="disconnected"
+    local tooltip="VPN: Disconnected"
+
+    if command -v nmcli >/dev/null 2>&1 &&
+       nmcli_c -t -f STATE general status >/dev/null 2>&1 &&
+       vpn_active_details; then
+        name=$VPN_ACTIVE_NAME
+        device=$VPN_ACTIVE_DEVICE
+        disp=$(clean "${name#ProtonVPN }")
+        [[ -n $disp ]] || disp=$(clean "$name")
+        text=$I_VPN
+        class="connected"
+        tooltip="VPN: $disp"
+        if [[ -n $device && $device != "--" ]]; then
+            ip=$(nmcli_c -g IP4.ADDRESS device show "$device" 2>/dev/null | head -n1)
+            [[ -n $ip ]] && tooltip+=$'\n'"IP: $ip"
+        fi
+    fi
+
+    printf '{"text":"%s","tooltip":"%s","class":"%s"}\n' \
+        "$text" "$(json_escape "$tooltip")" "$class"
+}
+
 main() {
+    local mode=${1:-}
+
+    # Waybar polls this every few seconds; it needs neither fuzzel nor a
+    # session, and must never pop a notification.
+    if [[ $mode == "--waybar" ]]; then
+        waybar_json
+        return 0
+    fi
+
     command -v fuzzel >/dev/null 2>&1 ||
         fail "fuzzel is not installed." "Install it with: sudo pacman -S fuzzel"
     command -v nmcli >/dev/null 2>&1 ||
@@ -1168,11 +1212,15 @@ main() {
     nmcli_c -t -f STATE general status >/dev/null 2>&1 ||
         fail "NetworkManager is not running." "Start NetworkManager.service."
 
-    main_menu
+    case $mode in
+        --vpn)  vpn_menu ;;
+        --wifi) wifi_menu ;;
+        *)      main_menu ;;
+    esac
 }
 
 # Allow sourcing for tests without launching the menu.
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
-    main
+    main "$@"
     exit 0
 fi

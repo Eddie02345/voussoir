@@ -7,6 +7,7 @@
         "tray",
         "pulseaudio",
         "backlight",
+        "custom/vpn",
         "network",
         "bluetooth",
         "battery",
@@ -37,15 +38,25 @@
     },
 
     "network": {
-    "format-wifi": "󰖩",
-    "format-ethernet": "󰈀",
-    "format-disconnected": "󰖪",
-    "tooltip-format": "{ifname} via {gwaddr}",
-    "tooltip-format-wifi": "{essid} ({signalStrength}%)",
-    "tooltip-format-ethernet": "{ifname} ",
-    "tooltip-format-disconnected": "Disconnected",
-    "on-click": "bash -c $HOME/.local/bin/wifi-menu"
-},
+        "interface": "wlan0",
+        "format-wifi": "󰖩",
+        "format-ethernet": "󰈀",
+        "format-disconnected": "󰖪",
+        "tooltip-format": "{ifname} via {gwaddr}",
+        "tooltip-format-wifi": "{essid} ({signalStrength}%)",
+        "tooltip-format-ethernet": "{ifname} ",
+        "tooltip-format-disconnected": "Disconnected",
+        "on-click": "bash -c $HOME/.local/bin/wifi-menu"
+    },
+    "custom/vpn": {
+        "exec": "$HOME/.local/bin/wifi-menu --waybar",
+        "return-type": "json",
+        "interval": 5,
+        "hide-empty-text": true,
+        "format": "{text}",
+        "on-click": "bash -c $HOME/.local/bin/wifi-menu --vpn",
+        "on-click-right": "bash -c $HOME/.local/bin/wifi-menu"
+    },
     "pulseaudio": {
         "format": "{volume}% {icon}",
         "format-muted": "󰝟",

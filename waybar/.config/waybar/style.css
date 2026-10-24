@@ -55,6 +55,7 @@ button:hover {
 #bluetooth,
 #backlight,
 #network,
+#custom-vpn,
 #pulseaudio,
 #power,
 #custom-power,
@@ -93,7 +94,12 @@ button:hover {
 #clock:hover,
 #backlight:hover,
 #network:hover,
+#custom-vpn:hover,
 #pulseaudio:hover,
 #tray:hover {
     background-color: rgba(200, 200, 200, 0.3); 
+}
+
+#custom-vpn.connected {
+    color: #a6e3a1; /* Catppuccin Green */
 }
