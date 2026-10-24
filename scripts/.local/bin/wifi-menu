@@ -456,6 +456,16 @@ parse_countries() {
     '
 }
 
+# Print the signed-in Proton account, or return 1 when signed out.
+vpn_account_name() {
+    [[ $VPN_IMPL == "new" ]] || return 1
+    local out
+    out=$(timeout 6 protonvpn info 2>/dev/null) || return 1
+    out=$(printf '%s\n' "$out" | sed -n "s/^Account: '\\(.*\\)'$/\\1/p" | head -n1)
+    [[ -n $out && $out != "None" ]] || return 1
+    printf '%s' "$out"
+}
+
 # The official CLI refuses to run while the desktop app is open.
 vpn_guard() {
     if [[ $VPN_IMPL == "new" ]] && vpn_gui_running; then
@@ -655,17 +665,43 @@ vpn_signin_terminal() {
     vpn_guard || return 1
     case $VPN_IMPL in
         new)
-            local user
-            user=$(ask_text "ProtonVPN username/email: ") || return 0
+            local account user prompt choice do_signout=0
+            account=$(vpn_account_name) || account=""
+
+            if [[ -n $account ]]; then
+                choice=$(printf '%s\n%s\n%s\n' \
+                    "$I_ACCOUNT  Signed in as: $(clean "$account")${TAB}0" \
+                    "$I_CLOSE  Sign out and switch account (disconnects VPN)${TAB}1" \
+                    "$I_CLOSE  Cancel${TAB}2" |
+                    pick "ProtonVPN: ") || return 0
+                case $choice in
+                    1) do_signout=1 ;;
+                    *) return 0 ;;
+                esac
+                prompt="New ProtonVPN username/email: "
+            else
+                prompt="ProtonVPN username/email: "
+            fi
+
+            user=$(ask_text "$prompt") || return 0
             # Trim stray leading/trailing whitespace from a paste.
             user="${user#"${user%%[![:space:]]*}"}"
             user="${user%"${user##*[![:space:]]}"}"
             [[ -n $user ]] || return 0
+
             # The new CLI takes the username as an argument, then asks for
             # the password and (if needed) a 2FA token on the terminal.
-            launch_terminal bash -lc \
-                'protonvpn signin "$1"; printf "\n"; read -rp "Press Enter to close…"' \
-                _ "$user"
+            # When switching accounts, sign out first (which also drops the
+            # current VPN tunnel).
+            if ((do_signout)); then
+                launch_terminal bash -lc \
+                    'protonvpn signout && protonvpn signin "$1"; printf "\n"; read -rp "Press Enter to close…"' \
+                    _ "$user"
+            else
+                launch_terminal bash -lc \
+                    'protonvpn signin "$1"; printf "\n"; read -rp "Press Enter to close…"' \
+                    _ "$user"
+            fi
             ;;
         legacy)
             launch_terminal bash -lc \
@@ -1057,7 +1093,7 @@ vpn_menu() {
             entries+=("$I_OPEN  Open ProtonVPN${TAB}${idx}");            actions+=("open");     ((idx++))
         fi
         if [[ $VPN_IMPL != "none" ]]; then
-            entries+=("$I_ACCOUNT  Sign in (terminal)${TAB}${idx}");        actions+=("signin");   ((idx++))
+            entries+=("$I_ACCOUNT  Sign in / switch account…${TAB}${idx}"); actions+=("signin");   ((idx++))
         fi
     fi
 
