@@ -40,7 +40,6 @@ readonly I_RANDOM="󰒲"
 readonly I_P2P="󰛥"
 readonly I_TOR="󰦝"
 readonly I_INFO="󰋽"
-readonly I_OPEN="󰐊"
 readonly I_SAVED="󰄬"
 readonly I_CLOSE="󰅖"
 readonly I_GLOBE="󰖟"
@@ -623,95 +622,76 @@ vpn_status_info() {
 }
 
 # ================================================================
-#  Launchers
+#  ProtonVPN sign-in (fuzzel + PTY, no terminal window)
 # ================================================================
 
-launch_terminal() {
-    if command -v alacritty >/dev/null 2>&1; then
-        setsid -f alacritty -e "$@" >/dev/null 2>&1
-    elif command -v kitty >/dev/null 2>&1; then
-        setsid -f kitty -e "$@" >/dev/null 2>&1
-    else
-        notify "dialog-error" "No terminal found" "Install alacritty or kitty." critical
-    fi
-}
-
-open_protonvpn() {
-    if vpn_gui_running; then
-        notify "network-vpn" "ProtonVPN" "The app is already running."
-        return 0
-    fi
-    if command -v protonvpn-app >/dev/null 2>&1; then
-        setsid -f protonvpn-app >/dev/null 2>&1
-        notify "network-vpn" "ProtonVPN" "Starting the desktop app…" low
-    else
-        notify "dialog-error" "ProtonVPN app not installed" \
-            "Install it with: sudo pacman -S proton-vpn-gtk-app" critical
-    fi
-}
-
-network_settings() {
-    if command -v nm-connection-editor >/dev/null 2>&1; then
-        setsid -f nm-connection-editor >/dev/null 2>&1
-    elif command -v nmtui >/dev/null 2>&1; then
-        launch_terminal nmtui
-    else
-        notify "dialog-error" "No network settings front-end found" \
-            "Install nm-connection-editor." critical
-    fi
-}
-
-vpn_signin_terminal() {
+vpn_signin() {
     vpn_guard || return 1
-    case $VPN_IMPL in
-        new)
-            local account user prompt choice do_signout=0
-            account=$(vpn_account_name) || account=""
+    if [[ $VPN_IMPL != "new" ]]; then
+        notify "dialog-error" "ProtonVPN sign-in unavailable" \
+            "The legacy CLI has no GUI-free sign-in path. Run it manually." critical
+        return 1
+    fi
 
-            if [[ -n $account ]]; then
-                choice=$(printf '%s\n%s\n%s\n' \
-                    "$I_ACCOUNT  Signed in as: $(clean "$account")${TAB}0" \
-                    "$I_CLOSE  Sign out and switch account (disconnects VPN)${TAB}1" \
-                    "$I_CLOSE  Cancel${TAB}2" |
-                    pick "ProtonVPN: ") || return 0
-                case $choice in
-                    1) do_signout=1 ;;
-                    *) return 0 ;;
-                esac
-                prompt="New ProtonVPN username/email: "
-            else
-                prompt="ProtonVPN username/email: "
-            fi
+    local account user pass token prompt choice do_signout=0 helper out rc
+    local -a helper_args=()
+    account=$(vpn_account_name) || account=""
 
-            user=$(ask_text "$prompt") || return 0
-            # Trim stray leading/trailing whitespace from a paste.
-            user="${user#"${user%%[![:space:]]*}"}"
-            user="${user%"${user##*[![:space:]]}"}"
-            [[ -n $user ]] || return 0
+    if [[ -n $account ]]; then
+        choice=$(printf '%s\n%s\n%s\n' \
+            "$I_ACCOUNT  Signed in as: $(clean "$account")${TAB}0" \
+            "$I_CLOSE  Sign out and switch account (disconnects VPN)${TAB}1" \
+            "$I_CLOSE  Cancel${TAB}2" |
+            pick "ProtonVPN: ") || return 0
+        case $choice in
+            1) do_signout=1 ;;
+            *) return 0 ;;
+        esac
+        prompt="New ProtonVPN username/email: "
+    else
+        prompt="ProtonVPN username/email: "
+    fi
 
-            # The new CLI takes the username as an argument, then asks for
-            # the password and (if needed) a 2FA token on the terminal.
-            # When switching accounts, sign out first (which also drops the
-            # current VPN tunnel).
-            if ((do_signout)); then
-                launch_terminal bash -lc \
-                    'protonvpn signout && protonvpn signin "$1"; printf "\n"; read -rp "Press Enter to close…"' \
-                    _ "$user"
-            else
-                launch_terminal bash -lc \
-                    'protonvpn signin "$1"; printf "\n"; read -rp "Press Enter to close…"' \
-                    _ "$user"
-            fi
-            ;;
-        legacy)
-            launch_terminal bash -lc \
-                'protonvpn-cli login; printf "\n"; read -rp "Press Enter to close…"'
-            ;;
-        *)
-            notify "dialog-error" "ProtonVPN CLI not installed" \
-                "Install it with: sudo pacman -S proton-vpn-cli" critical
-            ;;
-    esac
+    user=$(ask_text "$prompt") || return 0
+    # Trim stray leading/trailing whitespace from a paste.
+    user="${user#"${user%%[![:space:]]*}"}"
+    user="${user%"${user##*[![:space:]]}"}"
+    [[ -n $user ]] || return 0
+
+    pass=$(ask_password "ProtonVPN password for $user: ") || return 0
+    [[ -n $pass ]] || return 0
+    token=$(ask_password "2FA token (blank if not enabled): ") || return 0
+
+    helper=$(command -v protonvpn-signin-pty 2>/dev/null || true)
+    [[ -n $helper ]] || helper="${HOME}/.local/bin/protonvpn-signin-pty"
+    if [[ ! -x $helper ]]; then
+        notify "dialog-error" "Sign-in helper missing" \
+            "Re-stow the scripts package so protonvpn-signin-pty is installed." critical
+        return 1
+    fi
+
+    if ((do_signout)); then
+        notify "network-vpn" "Switching ProtonVPN account" \
+            "Signing out, then signing in as $user…" low
+    else
+        notify "network-vpn" "Signing in to ProtonVPN" \
+            "Authenticating $user…" low
+    fi
+
+    helper_args=("$helper")
+    ((do_signout)) && helper_args+=("--signout")
+    helper_args+=("$user")
+
+    out=$(printf '%s\n%s\n' "$pass" "$token" |
+        timeout 130 "${helper_args[@]}" 2>&1)
+    rc=$?
+    out=${out//$'\r'/}
+
+    if ((rc == 0)); then
+        notify "network-vpn" "ProtonVPN" "${out:-Signed in.}" normal
+    else
+        notify "dialog-error" "ProtonVPN sign-in failed" "${out:-Unknown error.}" critical
+    fi
 }
 
 close_vpn_gui_quiet() {
@@ -851,6 +831,267 @@ vpn_profiles_menu() {
 #  Wi-Fi sub-menus
 # ================================================================
 
+conn_get() {
+    local profile=$1 key=$2
+    nmcli_c -g "$key" connection show id "$profile" 2>/dev/null
+}
+
+conn_set() {
+    local profile=$1 key=$2 value=$3
+    nmcli_c connection modify id "$profile" "$key" "$value"
+}
+
+choose() {
+    local prompt=$1
+    shift
+    local -a opts=("$@") entries=()
+    local i choice
+    for i in "${!opts[@]}"; do
+        entries+=("${opts[$i]}${TAB}${i}")
+    done
+    choice=$(printf '%s\n' "${entries[@]}" | pick "$prompt ") || return 1
+    [[ -z $choice || ! $choice =~ ^[0-9]+$ ]] && return 1
+    printf '%s' "${opts[$choice]}"
+}
+
+retries_label() {
+    case ${1:--1} in
+        -1) printf 'default (4)' ;;
+        0)  printf 'forever' ;;
+        *)  printf '%s' "$1" ;;
+    esac
+}
+
+wifi_profile_settings() {
+    local profile=$1
+    [[ -n $profile ]] || return 0
+
+    local ssid active_conn is_active=0
+    local ac priority retries metered powersave mac ipv6 keymgmt choice val
+    local ac_label retry_label pass
+    local -a entries=() actions=()
+    local idx=0
+
+    ssid=$(conn_get "$profile" 802-11-wireless.ssid)
+    ssid=$(clean "$ssid")
+    [[ -n $ssid ]] || ssid=$(clean "$profile")
+
+    active_conn=$(active_wifi_connection) || true
+    [[ $profile == "$active_conn" ]] && is_active=1
+
+    ac=$(conn_get "$profile" connection.autoconnect); ac=${ac:-yes}
+    priority=$(conn_get "$profile" connection.autoconnect-priority); priority=${priority:-0}
+    retries=$(conn_get "$profile" connection.autoconnect-retries); retries=${retries:--1}
+    metered=$(conn_get "$profile" connection.metered); metered=${metered:-unknown}
+    powersave=$(conn_get "$profile" 802-11-wireless.powersave); powersave=${powersave:-default}
+    mac=$(conn_get "$profile" 802-11-wireless.cloned-mac-address); mac=${mac:-default}
+    ipv6=$(conn_get "$profile" ipv6.method); ipv6=${ipv6:-auto}
+    keymgmt=$(conn_get "$profile" 802-11-wireless-security.key-mgmt)
+
+    ac_label="Off"; [[ $ac == "yes" ]] && ac_label="On"
+    retry_label=$(retries_label "$retries")
+
+    if ((is_active)); then
+        entries+=("$I_WIFI  $(clean "$ssid")  (Connected)${TAB}${idx}")
+    else
+        entries+=("$I_WIFI_OFF  $(clean "$ssid")  (Disconnected)${TAB}${idx}")
+    fi
+    actions+=("noop"); ((idx++))
+
+    if ((is_active)); then
+        entries+=("$I_DISCONNECT  Disconnect${TAB}${idx}")
+        actions+=("disconnect")
+    else
+        entries+=("$I_WIFI  Connect${TAB}${idx}")
+        actions+=("connect")
+    fi
+    ((idx++))
+
+    entries+=("$I_TOGGLE  Auto-connect: $ac_label${TAB}${idx}"); actions+=("autoconnect"); ((idx++))
+    entries+=("$I_SETTINGS  Auto-connect priority: $priority${TAB}${idx}"); actions+=("priority"); ((idx++))
+    entries+=("$I_SETTINGS  Auto-connect retries: $retry_label${TAB}${idx}"); actions+=("retries"); ((idx++))
+    entries+=("$I_SETTINGS  Metered: $metered${TAB}${idx}"); actions+=("metered"); ((idx++))
+    entries+=("$I_SETTINGS  Wi-Fi powersave: $powersave${TAB}${idx}"); actions+=("powersave"); ((idx++))
+    entries+=("$I_SETTINGS  MAC address: $mac${TAB}${idx}"); actions+=("mac"); ((idx++))
+    entries+=("$I_SETTINGS  IPv6 method: $ipv6${TAB}${idx}"); actions+=("ipv6"); ((idx++))
+    if [[ $keymgmt == "wpa-psk" || $keymgmt == "sae" ]]; then
+        entries+=("$I_LOCK  Change Wi-Fi password…${TAB}${idx}"); actions+=("password"); ((idx++))
+    fi
+    if [[ $keymgmt == "wpa-eap" ]]; then
+        entries+=("$I_ACCOUNT  Change 802.1X username/password…${TAB}${idx}"); actions+=("eap"); ((idx++))
+    fi
+    entries+=("$I_DISCONNECT  Forget this network${TAB}${idx}"); actions+=("forget"); ((idx++))
+
+    choice=$(printf '%s\n' "${entries[@]}" | pick "Wi-Fi settings: " 20) || return 0
+    [[ -z $choice || ! $choice =~ ^[0-9]+$ ]] && return 0
+
+    case ${actions[$choice]:-} in
+        connect)
+            run_async "network-wireless" "Connecting to $(clean "$ssid")" \
+                connect_saved "$profile"
+            ;;
+        disconnect)
+            run_async "network-wireless-offline" "Disconnecting from $(clean "$ssid")" \
+                disconnect_wifi
+            ;;
+        autoconnect)
+            if [[ $ac == "yes" ]]; then
+                run_sync "network-wireless" "Disabling auto-connect for $(clean "$ssid")" \
+                    conn_set "$profile" connection.autoconnect no
+            else
+                run_sync "network-wireless" "Enabling auto-connect for $(clean "$ssid")" \
+                    conn_set "$profile" connection.autoconnect yes
+            fi
+            wifi_profile_settings "$profile"
+            ;;
+        priority)
+            val=$(ask_text "Auto-connect priority (-999..999): ") || {
+                wifi_profile_settings "$profile"; return 0
+            }
+            if [[ ! $val =~ ^-?(0|[1-9][0-9]*)$ ]] || ((val < -999 || val > 999)); then
+                notify "dialog-error" "Invalid priority" "Enter a number from -999 to 999." critical
+            else
+                run_sync "network-wireless" "Setting auto-connect priority to $val" \
+                    conn_set "$profile" connection.autoconnect-priority "$val"
+            fi
+            wifi_profile_settings "$profile"
+            ;;
+        retries)
+            val=$(ask_text "Retries (-1 default, 0 forever, N attempts): ") || {
+                wifi_profile_settings "$profile"; return 0
+            }
+            if [[ ! $val =~ ^-?(0|[1-9][0-9]*)$ ]] || ((val < -1)); then
+                notify "dialog-error" "Invalid retry count" \
+                    "Use -1 (default), 0 (forever), or a positive number." critical
+            else
+                run_sync "network-wireless" "Setting auto-connect retries to $val" \
+                    conn_set "$profile" connection.autoconnect-retries "$val"
+            fi
+            wifi_profile_settings "$profile"
+            ;;
+        metered)
+            val=$(choose "Metered" unknown yes no) || {
+                wifi_profile_settings "$profile"; return 0
+            }
+            run_sync "network-wireless" "Setting metered to $val" \
+                conn_set "$profile" connection.metered "$val"
+            wifi_profile_settings "$profile"
+            ;;
+        powersave)
+            val=$(choose "Wi-Fi powersave" default ignore disable enable) || {
+                wifi_profile_settings "$profile"; return 0
+            }
+            run_sync "network-wireless" "Setting powersave to $val — reconnect to apply" \
+                conn_set "$profile" 802-11-wireless.powersave "$val"
+            wifi_profile_settings "$profile"
+            ;;
+        mac)
+            val=$(choose "MAC address policy" default permanent stable random preserve) || {
+                wifi_profile_settings "$profile"; return 0
+            }
+            [[ $val == "default" ]] && val="preserve"
+            run_sync "network-wireless" "Setting MAC policy to $val — reconnect to apply" \
+                conn_set "$profile" 802-11-wireless.cloned-mac-address "$val"
+            wifi_profile_settings "$profile"
+            ;;
+        ipv6)
+            val=$(choose "IPv6 method" auto disabled ignore) || {
+                wifi_profile_settings "$profile"; return 0
+            }
+            run_sync "network-wireless" "Setting IPv6 to $val — reconnect to apply" \
+                conn_set "$profile" ipv6.method "$val"
+            wifi_profile_settings "$profile"
+            ;;
+        password)
+            pass=$(ask_password "New Wi-Fi password for $(clean "$ssid"): ") || {
+                wifi_profile_settings "$profile"; return 0
+            }
+            if [[ -z $pass ]]; then
+                wifi_profile_settings "$profile"
+                return 0
+            fi
+            run_sync "network-wireless" "Updating Wi-Fi password for $(clean "$ssid")" \
+                conn_set "$profile" 802-11-wireless-security.psk "$pass"
+            notify "network-wireless" "Password updated" "Reconnect to apply the new password." normal
+            wifi_profile_settings "$profile"
+            ;;
+        eap)
+            local ident newident newpass
+            ident=$(conn_get "$profile" 802-1x.identity)
+            ident=$(clean "$ident")
+            newident=$(ask_text "802.1X username [${ident:-unchanged}]: ") || {
+                wifi_profile_settings "$profile"; return 0
+            }
+            newident="${newident#"${newident%%[![:space:]]*}"}"
+            newident="${newident%"${newident##*[![:space:]]}"}"
+            newpass=$(ask_password "802.1X password (blank keeps current): ") || {
+                wifi_profile_settings "$profile"; return 0
+            }
+            if [[ -n $newident ]]; then
+                run_sync "network-wireless" "Updating 802.1X username" \
+                    conn_set "$profile" 802-1x.identity "$newident"
+            fi
+            if [[ -n $newpass ]]; then
+                run_sync "network-wireless" "Updating 802.1X password" \
+                    conn_set "$profile" 802-1x.password "$newpass"
+            fi
+            if [[ -z $newident && -z $newpass ]]; then
+                notify "network-wireless" "802.1X credentials" "Nothing changed." normal
+            else
+                notify "network-wireless" "802.1X credentials updated" "Reconnect to apply." normal
+            fi
+            wifi_profile_settings "$profile"
+            ;;
+        forget)
+            if confirm "Forget $(clean "$ssid")? "; then
+                run_sync "network-wireless-offline" "Forgetting $(clean "$ssid")" \
+                    nmcli_c connection delete id "$profile"
+            fi
+            ;;
+    esac
+}
+
+wifi_profiles_menu() {
+    local line type name ssid active_conn choice label act
+    local -a rows=() entries=()
+    local -A DATA=()
+    local idx=0
+
+    active_conn=$(active_wifi_connection) || true
+    while IFS= read -r line; do
+        nm_split "$line"
+        type=${NM_FIELDS[1]:-}
+        name=${NM_FIELDS[0]:-}
+        [[ $type == "802-11-wireless" && -n $name ]] || continue
+        ssid=$(conn_get "$name" 802-11-wireless.ssid)
+        ssid=$(clean "$ssid")
+        [[ -n $ssid ]] || ssid=$(clean "$name")
+        act=1
+        [[ $name == "$active_conn" ]] && act=0
+        rows+=("${act}${TAB}${ssid}${TAB}${name}")
+    done < <(nmcli_c -t -e yes -f NAME,TYPE connection show 2>/dev/null)
+
+    # Active profile first, then alphabetical by SSID.
+    while IFS="$TAB" read -r act ssid name; do
+        [[ -n $name ]] || continue
+        printf -v label '%s  %s' "$I_WIFI" "$(pad "$ssid" 30)"
+        [[ $name != "$ssid" ]] && label+=" $name"
+        ((act == 0)) && label+="  $I_WIFI"
+        entries+=("${label}${TAB}${idx}")
+        DATA[$idx]=$name
+        ((idx++))
+    done < <(printf '%s\n' "${rows[@]}" | sort -t"$TAB" -k1,1n -k2,2)
+
+    if (( ${#entries[@]} == 0 )); then
+        notify "network-wireless" "Wi-Fi settings" "No saved Wi-Fi networks."
+        return 0
+    fi
+
+    choice=$(printf '%s\n' "${entries[@]}" | pick "Saved networks: " 20) || return 0
+    [[ -z $choice || ! $choice =~ ^[0-9]+$ ]] && return 0
+    wifi_profile_settings "${DATA[$choice]:-}"
+}
+
 wifi_active_actions() {
     local ssid=$1 profile conn choice
     conn=$(active_wifi_connection) || true
@@ -860,7 +1101,7 @@ wifi_active_actions() {
     local -a entries=() actions=()
     entries+=("$I_DISCONNECT  Disconnect from $(clean "$ssid")${TAB}0"); actions+=("disconnect")
     entries+=("$I_RESCAN  Reconnect to $(clean "$ssid")${TAB}1");      actions+=("reconnect")
-    entries+=("$I_SETTINGS  Network settings…${TAB}2");                  actions+=("settings")
+    entries+=("$I_SETTINGS  Settings for $(clean "$ssid")…${TAB}2");   actions+=("settings")
 
     choice=$(printf '%s\n' "${entries[@]}" | pick "Wi-Fi: ") || return 0
     [[ -z $choice || ! $choice =~ ^[0-9]+$ ]] && return 0
@@ -874,7 +1115,14 @@ wifi_active_actions() {
             run_async "network-wireless" "Reconnecting to $(clean "$ssid")" \
                 reconnect_wifi "$ssid" "$profile"
             ;;
-        settings) network_settings ;;
+        settings)
+            if [[ -n $profile ]]; then
+                wifi_profile_settings "$profile"
+            else
+                notify "dialog-error" "No saved profile" \
+                    "No NetworkManager profile was found for $(clean "$ssid")." critical
+            fi
+            ;;
     esac
 }
 
@@ -897,9 +1145,8 @@ wifi_select_network() {
     fi
 
     if [[ $sec == *802.1X* || $sec == *802.1x* ]]; then
-        notify "preferences-system" "Enterprise network" \
-            "$(clean "$ssid") needs a username; opening network settings." normal
-        network_settings
+        notify "dialog-information" "Enterprise network" \
+            "$(clean "$ssid") uses 802.1X. Create the profile with nmcli; this menu stays inside fuzzel." normal
         return 0
     fi
 
@@ -949,13 +1196,13 @@ wifi_menu() {
     if [[ $radio != "enabled" ]]; then
         entries+=("$I_WIFI_OFF  Wi-Fi is off${TAB}0");        actions+=("noop")
         entries+=("$I_TOGGLE  Turn Wi-Fi on${TAB}1");         actions+=("toggle")
-        entries+=("$I_SETTINGS  Network settings…${TAB}2");   actions+=("settings")
+        entries+=("$I_SETTINGS  Saved network settings…${TAB}2"); actions+=("settings")
 
         choice=$(printf '%s\n' "${entries[@]}" | pick "Wi-Fi: ") || return 0
         [[ -z $choice || ! $choice =~ ^[0-9]+$ ]] && return 0
         case ${actions[$choice]:-} in
             toggle) toggle_wifi ;;
-            settings) network_settings ;;
+            settings) wifi_profiles_menu ;;
         esac
         return 0
     fi
@@ -976,6 +1223,7 @@ wifi_menu() {
 
     entries+=("$I_RESCAN  Rescan networks${TAB}${idx}");              actions+=("rescan");  DATA[$idx]=""; ((idx++))
     entries+=("$I_SETTINGS  Connect to hidden network…${TAB}${idx}"); actions+=("hidden");  DATA[$idx]=""; ((idx++))
+    entries+=("$I_SETTINGS  Saved network settings…${TAB}${idx}");    actions+=("settings"); DATA[$idx]=""; ((idx++))
     entries+=("$I_TOGGLE  Turn Wi-Fi off${TAB}${idx}");               actions+=("toggle");  DATA[$idx]=""; ((idx++))
 
     if [[ -n $AW_SSID ]]; then
@@ -1028,7 +1276,7 @@ wifi_menu() {
         toggle)     toggle_wifi ;;
         disconnect) run_async "network-wireless-offline" \
                         "Disconnecting from $(clean "${DATA[$choice]:-}")" disconnect_wifi ;;
-        settings)   network_settings ;;
+        settings)   wifi_profiles_menu ;;
     esac
 }
 
@@ -1089,9 +1337,6 @@ vpn_menu() {
 
         entries+=("$I_SETTINGS  Other VPN profiles…${TAB}${idx}");       actions+=("profiles"); ((idx++))
 
-        if command -v protonvpn-app >/dev/null 2>&1; then
-            entries+=("$I_OPEN  Open ProtonVPN${TAB}${idx}");            actions+=("open");     ((idx++))
-        fi
         if [[ $VPN_IMPL != "none" ]]; then
             entries+=("$I_ACCOUNT  Sign in / switch account…${TAB}${idx}"); actions+=("signin");   ((idx++))
         fi
@@ -1109,8 +1354,7 @@ vpn_menu() {
         country)    vpn_country_menu ;;
         server)     vpn_server_prompt ;;
         profiles)   vpn_profiles_menu ;;
-        open)       open_protonvpn ;;
-        signin)     vpn_signin_terminal ;;
+        signin)     vpn_signin ;;
         close-gui)  close_vpn_gui && vpn_menu ;;
         no-cli)     notify "dialog-error" "ProtonVPN CLI not installed" \
                         "Install it with: sudo pacman -S proton-vpn-cli" critical ;;
@@ -1176,15 +1420,9 @@ main_menu() {
         ((idx++))
     fi
 
-    entries+=("$I_SETTINGS  Network settings…${TAB}${idx}")
-    actions+=("settings")
+    entries+=("$I_SETTINGS  Wi-Fi settings…${TAB}${idx}")
+    actions+=("wifi-settings")
     ((idx++))
-
-    if command -v protonvpn-app >/dev/null 2>&1 && ((vpn_gui == 0)); then
-        entries+=("$I_OPEN  Open ProtonVPN${TAB}${idx}")
-        actions+=("open-vpn")
-        ((idx++))
-    fi
 
     choice=$(printf '%s\n' "${entries[@]}" | pick "Network: ") || return 0
     [[ -z $choice || ! $choice =~ ^[0-9]+$ ]] && return 0
@@ -1196,8 +1434,7 @@ main_menu() {
         vpn-quick)  vpn_connect_action fastest ;;
         rescan)     rescan_wifi ;;
         toggle)     toggle_wifi ;;
-        settings)   network_settings ;;
-        open-vpn)   open_protonvpn ;;
+        wifi-settings) wifi_profiles_menu ;;
     esac
 }
 

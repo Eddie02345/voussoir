@@ -327,22 +327,24 @@ done
 
 # ── Waybar: Wi-Fi and VPN icons open separate menus ─────────────
 # The 'waybar' package ships custom/vpn; the 'scripts' package ships
-# wifi-menu. Verify both landed, otherwise the bar falls back to the
-# combined menu (or no VPN menu at all).
+# wifi-menu and the GUI-free ProtonVPN sign-in helper. Verify both
+# landed, otherwise the bar falls back to the combined menu (or no VPN
+# menu/terminal-free sign-in at all).
 if (( DRY_RUN )); then
-    info "[dry-run] would verify Waybar network/VPN click separation"
+    info "[dry-run] would verify Waybar split and fuzzel-only VPN sign-in helper"
 else
     WAYBAR_CONF="${HOME}/.config/waybar/config.jsonc"
     WIFI_MENU="${HOME}/.local/bin/wifi-menu"
-    if [[ -f "$WAYBAR_CONF" && -x "$WIFI_MENU" ]] &&
+    SIGNIN_HELPER="${HOME}/.local/bin/protonvpn-signin-pty"
+    if [[ -f "$WAYBAR_CONF" && -x "$WIFI_MENU" && -x "$SIGNIN_HELPER" ]] &&
        grep -q '"custom/vpn"' "$WAYBAR_CONF" &&
        grep -qE '"on-click"[[:space:]]*:[[:space:]]*"\$HOME/\.local/bin/wifi-menu --wifi"' "$WAYBAR_CONF" &&
        grep -qE '"on-click"[[:space:]]*:[[:space:]]*"\$HOME/\.local/bin/wifi-menu --vpn"' "$WAYBAR_CONF" &&
        grep -qE -- '--wifi\)[[:space:]]+wifi_menu' "$WIFI_MENU" &&
        grep -qE -- '--vpn\)[[:space:]]+vpn_menu' "$WIFI_MENU"; then
-        ok "Waybar: Wi-Fi icon opens the Wi-Fi menu; VPN icon opens the VPN menu."
+        ok "Waybar split deployed; ProtonVPN sign-in stays inside fuzzel."
     else
-        warn "Waybar Wi-Fi/VPN split not deployed — check the 'waybar' and 'scripts' stow packages."
+        warn "Waybar/scripts deployment incomplete — check the 'waybar' and 'scripts' stow packages."
     fi
 fi
 

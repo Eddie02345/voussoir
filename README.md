@@ -22,7 +22,7 @@ package whose contents mirror `$HOME`:
 
 ```
 hypr/.config/hypr/        Hyprland configuration — Lua
-scripts/.local/bin/       wifi-menu — fuzzel Wi-Fi / ProtonVPN menu
+scripts/.local/bin/       wifi-menu + protonvpn-signin-pty
 waybar/.config/waybar/    Waybar bar: config.jsonc, style.css, scripts/
 ```
 
@@ -65,6 +65,7 @@ only — Hyprland does not load it, and it should not be edited.
 ```bash
 luac -p hypr/.config/hypr/*.lua                                     # syntax
 bash -n install.sh post-install.sh scripts/.local/bin/wifi-menu     # shell syntax
+python3 -c 'compile(open("scripts/.local/bin/protonvpn-signin-pty").read(), "protonvpn-signin-pty", "exec")'  # helper syntax
 hyprland --verify-config -c hypr/.config/hypr/hyprland.lua          # the real check
 shellcheck install.sh post-install.sh scripts/.local/bin/wifi-menu  # if installed
 ```
@@ -80,8 +81,12 @@ the control plane. **iwd** stays as the 802.11 backend and is started on demand
 by NetworkManager; DNS is handed to **systemd-resolved**. `networkctl` is not
 used here — it only fronts systemd-networkd, which is not part of this setup.
 
-The Waybar network module and `Super + N` open `wifi-menu`
-(`scripts/.local/bin/wifi-menu`), a fuzzel menu that can:
+The Waybar network icon opens `wifi-menu --wifi`, the VPN icon opens
+`wifi-menu --vpn`, and `Super + N` opens the combined menu
+(`scripts/.local/bin/wifi-menu`). The menu is entirely fuzzel-driven — no
+action launches another GUI.
+
+The Wi-Fi side can:
 
 - show Wi-Fi and VPN state in a status header;
 - scan from the cached list and rescan only on request;
@@ -89,17 +94,24 @@ The Waybar network module and `Super + N` open `wifi-menu`
 - connect saved profiles directly, or prompt for a passphrase inline;
 - disconnect/reconnect the active network, join hidden networks, and toggle
   the radio;
+- manage saved profiles in fuzzel: connect/disconnect, auto-connect on/off,
+  auto-connect priority and retries, metered state, Wi-Fi powersave, MAC
+  address policy, IPv6 method, WPA/802.1X credentials, and forget network.
+
+The VPN side can:
+
 - run ProtonVPN connects in the background and report the server/IP in a
   notification;
 - quick-connect the fastest/random/P2P/Tor/Secure Core server, pick a country
   from the CLI's list, or enter a specific server;
 - show VPN status plus tunnel/public IP on demand;
 - activate imported NetworkManager VPN / WireGuard profiles;
-- open the ProtonVPN app or `nm-connection-editor`.
+- sign in or switch accounts with fuzzel username/password/2FA prompts. The
+  official CLI is driven through a PTY helper, so no terminal window opens.
 
 The official CLI cannot run while the ProtonVPN desktop app is open. When the
 menu detects the app, it offers to close it and then exposes the full CLI
-actions.
+actions; it never launches the app itself.
 
 The ProtonVPN packages are in Arch's `extra` repo and are installed by the
 installer/post-install:
